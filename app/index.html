@@ -1,0 +1,186 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF分割工具</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        #upload-section, #grid-section, #output {
+            margin: 20px 0;
+        }
+        #canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        canvas {
+            border: 1px solid #000;
+            margin: 5px;
+        }
+        select, input, button {
+            margin: 10px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF分割工具</h1>
+    <div id="upload-section">
+        <input type="file" id="pdfInput" accept="application/pdf">
+    </div>
+    <div id="grid-section" style="display: none;">
+        <label for="gridSelect">選擇分割方式：</label>
+        <select id="gridSelect">
+            <option value="2x2">2x2</option>
+            <option value="2x3">2x3</option>
+            <option value="3x3">3x3</option>
+            <option value="4x4">3x4</option>
+            <option value="4x4">4x3</option>
+            <option value="4x4">4x4</option>
+        </select>
+        <button onclick="splitPDF()">分割PDF</button>
+        <button onclick="downloadPDF()" style="display: none;" id="downloadBtn">下載分割PDF</button>
+    </div>
+    <div id="output">
+        <h3>分割結果</h3>
+        <div id="canvas-container"></div>
+    </div>
+
+    <script>
+        let pdfDoc = null;
+        let canvases = [];
+
+        document.getElementById('pdfInput').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (file && file.type === "application/pdf") {
+                const arrayBuffer = await file.arrayBuffer();
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+                pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
+                document.getElementById('grid-section').style.display = 'block';
+            } else {
+                alert('請上傳有效的PDF檔案！');
+            }
+        });
+
+        async function splitPDF() {
+            if (!pdfDoc) {
+                alert('請先上傳PDF檔案！');
+                return;
+            }
+
+            const gridSelect = document.getElementById('gridSelect').value;
+            const [rows, cols] = gridSelect.split('x').map(Number);
+            const canvasContainer = document.getElementById('canvas-container');
+            canvasContainer.innerHTML = ''; // 清空之前的畫布
+            canvases = []; // 清空畫布陣列
+
+            // A4尺寸（像素，300 DPI）
+            const a4Width = 2480; // 8.27英寸 * 300
+            const a4Height = 3508; // 11.69英寸 * 300
+            const tileWidth = a4Width / cols;
+            const tileHeight = a4Height / rows;
+
+            const page = await pdfDoc.getPage(1); // 處理第一頁
+            const viewport = page.getViewport({ scale: 1.0 });
+            const scale = Math.min(a4Width / viewport.width, a4Height / viewport.height);
+            const scaledViewport = page.getViewport({ scale });
+
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = tileWidth;
+                    canvas.height = tileHeight;
+                    const context = canvas.getContext('2d');
+
+                    // 計算分割區域
+                    const srcX = col * (scaledViewport.width / cols);
+                    const srcY = row * (scaledViewport.height / rows);
+                    const srcWidth = scaledViewport.width / cols;
+                    const srcHeight = scaledViewport.height / rows;
+
+                    // 渲染PDF片段
+                    await page.render({
+                        canvasContext: context,
+                        viewport: scaledViewport,
+                        transform: [1, 0, 0, 1, -srcX, -srcY]
+                    }).promise;
+
+                    canvasContainer.appendChild(canvas);
+                    canvases.push(canvas);
+                }
+            }
+
+            // 顯示下載按鈕
+            document.getElementById('downloadBtn').style.display = 'inline';
+        }
+
+        function downloadPDF() {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({
+                orientation: 'portrait',
+                unit: 'pt',
+                format: 'a4'
+            });
+
+            const a4WidthPt = 595.28; // A4寬度（點）
+            const a4HeightPt = 841.89; // A4高度（點）
+
+            canvases.forEach((canvas, index) => {
+                if (index > 0) {
+                    pdf.addPage();
+                }
+                const imgData = canvas.toDataURL('image/png');
+                pdf.addImage(imgData, 'PNG', 0, 0, a4WidthPt, a4HeightPt);
+            });
+
+            pdf.save('split_pdf.pdf');
+        }
+    </script>
+</body>
+</html>
