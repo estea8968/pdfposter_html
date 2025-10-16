@@ -1,43 +1,4 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
-
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
-                }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
-            }
-        }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -45,51 +6,395 @@
     <title>PDF分割工具</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            color: #333;
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
             text-align: center;
+            position: relative;
         }
+
+        .hero {
+            position: relative;
+            margin-bottom: 40px;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 100px;
+            background: radial-gradient(circle, #667eea 0%, transparent 70%);
+            border-radius: 50%;
+            z-index: -1;
+        }
+
+        h1 {
+            font-weight: 700;
+            font-size: 3rem;
+            margin: 0 0 40px 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: #666;
+            margin-bottom: 30px;
+            font-weight: 300;
+        }
+
         #upload-section, #grid-section, #output {
-            margin: 20px 0;
+            margin: 40px 0;
+            padding: 30px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.1);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            overflow: hidden;
         }
-        #canvas-container {
+
+        #upload-section::before, #grid-section::before, #output::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        #upload-section:hover, #grid-section:hover, #output:hover {
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.15);
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 20px;
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+
+        input[type="file"] {
+            font-size: 1.1rem;
+            padding: 15px;
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            background: linear-gradient(135deg, #f8f9ff 0%, #e8ecff 100%);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        input[type="file"]:hover {
+            border-color: #764ba2;
+            background: linear-gradient(135deg, #e8ecff 0%, #d4d9ff 100%);
+            transform: scale(1.02);
+        }
+
+        select, button {
+            margin: 15px;
+            padding: 15px 25px;
+            font-size: 1.1rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Roboto', sans-serif;
+            min-width: 200px;
+        }
+
+        select:focus, button:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15);
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-weight: 600;
+            position: relative;
+            overflow: hidden;
+        }
+
+        button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        button:hover::before {
+            left: 100%;
+        }
+
+        button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(-1px);
+        }
+
+        button i {
+            margin-right: 8px;
+        }
+
+        label {
+            font-weight: 600;
+            font-size: 1.2rem;
+            margin-right: 15px;
+            color: #555;
+        }
+
+        #grid-section {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #grid-section.show {
+            display: flex;
+        }
+
+        .grid-controls {
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 30px;
         }
+
+        #canvas-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            justify-content: center;
+            padding: 30px;
+            max-width: 100%;
+        }
+
         canvas {
-            border: 1px solid #000;
-            margin: 5px;
+            border: 3px solid #e0e0e0;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            transition: all 0.4s ease;
+            max-width: 100%;
+            height: auto;
+            cursor: pointer;
         }
-        select, input, button {
-            margin: 10px;
-            padding: 5px;
+
+        canvas:hover {
+            transform: scale(1.05) rotate(1deg);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.2);
+            border-color: #667eea;
+        }
+
+        h3 {
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 30px;
+            font-size: 1.8rem;
+        }
+
+        /* 響應式設計 - 強化AWD */
+        @media (max-width: 1024px) {
+            h1 {
+                font-size: 2.5rem;
+            }
+
+            #canvas-container {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                padding: 20px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+
+            .container {
+                padding: 0 15px;
+            }
+
+            h1 {
+                font-size: 2.2rem;
+            }
+
+            .subtitle {
+                font-size: 1rem;
+            }
+
+            #upload-section, #grid-section, #output {
+                padding: 20px;
+                margin: 25px 0;
+                border-radius: 15px;
+            }
+
+            .upload-icon {
+                font-size: 3rem;
+            }
+
+            .grid-controls {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            select, button {
+                width: 100%;
+                max-width: 350px;
+                margin: 10px 0;
+                padding: 12px 20px;
+            }
+
+            label {
+                margin-right: 0;
+                margin-bottom: 10px;
+                text-align: center;
+                display: block;
+            }
+
+            #canvas-container {
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 12px;
+                padding: 15px;
+            }
+
+            canvas {
+                border-width: 2px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            #upload-section, #grid-section, #output {
+                padding: 15px;
+                margin: 20px 0;
+            }
+
+            .upload-icon {
+                font-size: 2.5rem;
+            }
+
+            #canvas-container {
+                grid-template-columns: 1fr;
+                gap: 15px;
+                padding: 10px;
+            }
+
+            button {
+                padding: 12px 18px;
+                font-size: 1rem;
+            }
+
+            .hero::before {
+                width: 80px;
+                height: 80px;
+                top: -15px;
+            }
+        }
+
+        /* 載入動畫 */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 無PDF時的提示 */
+        .no-pdf {
+            color: #888;
+            font-style: italic;
+            margin-top: 20px;
         }
     </style>
 </head>
 <body>
-    <h1>PDF分割工具</h1>
-    <div id="upload-section">
-        <input type="file" id="pdfInput" accept="application/pdf">
-    </div>
-    <div id="grid-section" style="display: none;">
-        <label for="gridSelect">選擇分割方式：</label>
-        <select id="gridSelect">
-            <option value="2x2">2x2</option>
-            <option value="2x3">2x3</option>
-            <option value="3x3">3x3</option>
-            <option value="4x4">3x4</option>
-            <option value="4x4">4x3</option>
-            <option value="4x4">4x4</option>
-        </select>
-        <button onclick="splitPDF()">分割PDF</button>
-        <button onclick="downloadPDF()" style="display: none;" id="downloadBtn">下載分割PDF</button>
-    </div>
-    <div id="output">
-        <h3>分割結果</h3>
-        <div id="canvas-container"></div>
+    <div class="container">
+        <div class="hero">
+            <h1><i class="fas fa-cut"></i> PDF分割工具</h1>
+            <p class="subtitle">輕鬆將您的PDF頁面分割成多個小塊，適用於列印或編輯</p>
+        </div>
+        <div id="upload-section">
+            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+            <input type="file" id="pdfInput" accept="application/pdf">
+            <p class="no-pdf" id="noPdfHint">請上傳PDF檔案開始分割</p>
+        </div>
+        <div id="grid-section">
+            <div class="grid-controls">
+                <label for="gridSelect">選擇分割方式：</label>
+                <select id="gridSelect">
+                    <option value="2x2">2x2</option>
+                    <option value="2x3">2x3</option>
+                    <option value="3x3">3x3</option>
+                    <option value="3x4">3x4</option>
+                    <option value="4x3">4x3</option>
+                    <option value="4x4">4x4</option>
+                </select>
+                <button onclick="splitPDF()"><i class="fas fa-scissors"></i>分割PDF</button>
+                <button onclick="downloadPDF()" style="display: none;" id="downloadBtn"><i class="fas fa-download"></i>下載分割PDF</button>
+            </div>
+        </div>
+        <div id="output">
+            <h3><i class="fas fa-image"></i> 分割結果</h3>
+            <div id="canvas-container"></div>
+        </div>
     </div>
 
     <script>
@@ -98,12 +403,23 @@
 
         document.getElementById('pdfInput').addEventListener('change', async (event) => {
             const file = event.target.files[0];
+            const noPdfHint = document.getElementById('noPdfHint');
             if (file && file.type === "application/pdf") {
+                noPdfHint.style.display = 'none';
+                const splitBtn = document.querySelector('button[onclick="splitPDF()"]');
+                splitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 載入中...';
+                splitBtn.disabled = true;
+
                 const arrayBuffer = await file.arrayBuffer();
                 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
                 pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
-                document.getElementById('grid-section').style.display = 'block';
+                
+                document.getElementById('grid-section').classList.add('show');
+                splitBtn.innerHTML = '<i class="fas fa-scissors"></i>分割PDF';
+                splitBtn.disabled = false;
             } else {
+                noPdfHint.style.display = 'block';
+                noPdfHint.textContent = '請上傳有效的PDF檔案！';
                 alert('請上傳有效的PDF檔案！');
             }
         });
@@ -113,6 +429,10 @@
                 alert('請先上傳PDF檔案！');
                 return;
             }
+
+            const splitBtn = document.querySelector('button[onclick="splitPDF()"]');
+            splitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 分割中...';
+            splitBtn.disabled = true;
 
             const gridSelect = document.getElementById('gridSelect').value;
             const [rows, cols] = gridSelect.split('x').map(Number);
@@ -157,7 +477,9 @@
             }
 
             // 顯示下載按鈕
-            document.getElementById('downloadBtn').style.display = 'inline';
+            document.getElementById('downloadBtn').style.display = 'inline-block';
+            splitBtn.innerHTML = '<i class="fas fa-scissors"></i>分割PDF';
+            splitBtn.disabled = false;
         }
 
         function downloadPDF() {
